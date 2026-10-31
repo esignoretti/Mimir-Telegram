@@ -41,6 +41,14 @@ def _message(update: dict) -> dict | None:
     return update.get("message") or None
 
 
+def largest_photo(message: dict) -> dict | None:
+    """Telegram sends several sizes; the last entry is the largest."""
+    photos = message.get("photo") or []
+    if not photos:
+        return None
+    return max(photos, key=lambda p: p.get("file_size") or p.get("width") or 0)
+
+
 class App:
     def __init__(
         self, cfg: Config, store: Store, tg: Telegram, mimir: MimirClient
@@ -80,11 +88,19 @@ class App:
             await self.tg.send_message(chat_id, result.text)
             return
 
-        # Photos are handled in a later task; for now only text turns exist.
+        photo = largest_photo(message)
         image_data_url = None
+        if photo is not None:
+            image_data_url = await self._download_photo(photo.get("file_id"))
+            if image_data_url is None:
+                await self.tg.send_message(chat_id, "could not download that photo")
+                return
 
         if not text and image_data_url is None:
             return
+
+        if image_data_url is not None and not text:
+            text = "Describe this image."
 
         placeholder_id = await self.tg.send_message(chat_id, PLACEHOLDER)
         task = await self.lock.replace(
@@ -93,6 +109,15 @@ class App:
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _download_photo(self, file_id: str | None) -> str | None:
+        if not file_id:
+            return None
+        try:
+            return await self.tg.photo_data_url(file_id)
+        except Exception as exc:
+            log.warning("photo download failed: %s", exc)
+            return None
 
     async def idle(self) -> None:
         while True:

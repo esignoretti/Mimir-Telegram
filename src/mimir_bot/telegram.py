@@ -8,6 +8,7 @@ dispatcher.
 
 from __future__ import annotations
 
+import base64
 import logging
 
 import httpx
@@ -90,3 +91,19 @@ class Telegram:
             await self._call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
         except Exception as exc:  # best effort: never break a turn over a hint
             log.debug("sendChatAction failed: %s", exc)
+
+    async def get_file_url(self, file_id: str) -> str:
+        body = await self._call("getFile", {"file_id": file_id})
+        file_path = (body.get("result") or {}).get("file_path")
+        if not file_path:
+            raise RuntimeError(f"telegram getFile returned no file_path for {file_id}")
+        return f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+
+    async def photo_data_url(self, file_id: str) -> str:
+        """Download a photo and inline it as a data URL the vision model accepts."""
+        url = await self.get_file_url(file_id)
+        resp = await self.client.get(url)
+        resp.raise_for_status()
+        mime = resp.headers.get("content-type") or "image/jpeg"
+        encoded = base64.b64encode(resp.content).decode("ascii")
+        return f"data:{mime};base64,{encoded}"

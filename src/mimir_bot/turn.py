@@ -33,6 +33,14 @@ def build_request(history: list[dict], system_prompt: str) -> list[dict]:
     return [{"role": "system", "content": system_prompt}, *history]
 
 
+def image_content(text: str, image_data_url: str) -> list[dict]:
+    """The multimodal content array the vision model expects."""
+    return [
+        {"type": "text", "text": text or "Describe this image."},
+        {"type": "image_url", "image_url": {"url": image_data_url}},
+    ]
+
+
 class GenerationLock:
     """At most one turn per chat, newest wins.
 
@@ -93,11 +101,11 @@ class TurnRunner:
         if image_data_url:
             user_message = {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": user_text or "What is in this image?"},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ],
+                "content": image_content(user_text, image_data_url),
             }
+        # History stays text-only: the image is not re-sent on later turns, and a
+        # stored data URL would grow every subsequent prompt by its own size.
+        stored_text = f"{user_text} [image]" if image_data_url else user_text
 
         request = build_request([*history, user_message], self.cfg.system_prompt)
         renderer = TurnRenderer(
@@ -113,7 +121,7 @@ class TurnRunner:
             async for event in self.mimir.stream(request, model, effort):
                 if not started:
                     started = True
-                    await self.store.add_message(chat_id, "user", user_text)
+                    await self.store.add_message(chat_id, "user", stored_text)
                 await renderer.on_event(event)
                 if event.kind == "content":
                     answer += event.text
