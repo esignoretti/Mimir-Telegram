@@ -734,7 +734,9 @@ async def build(tmp_path, edits):
         async def send_message(self, c, t, reply_to=None): edits.append(t); return 1
     class M:
         async def stream(self, messages, model, effort, max_tokens=None):
+            import asyncio
             from mimir_bot.mimir import StreamEvent
+            await asyncio.sleep(0.05)
             yield StreamEvent("content", "answer")
     store = Store(str(tmp_path / "t.db")); await store.init()
     cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
@@ -751,6 +753,7 @@ async def test_plain_message_starts_turn(tmp_path):
     edits = []
     app, store = await build(tmp_path, edits)
     await app.handle_update(upd(1, "question"))
+    await app.idle()
     assert any("answer" in e for e in edits)
     assert len(await store.history(100, 100_000)) == 2
 
