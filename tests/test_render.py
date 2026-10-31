@@ -143,8 +143,12 @@ async def test_dead_placeholder_is_not_retried():
     assert tg.calls == 1, f"retried a dead placeholder {tg.calls} times"
 
 
-async def test_long_answer_streaming_scales_linearly():
-    """`answer += chunk` per SSE event was quadratic; 4x the chunks must cost ~4x."""
+async def test_streaming_cost_does_not_grow_with_answer_length():
+    """Quadratic streaming shows up as a slow *late* block, not a slow early one.
+
+    Comparing the last block of events with the first block keeps the assertion
+    independent of how fast the machine is, which a fixed time budget was not.
+    """
     import time
     from mimir_bot.render import TurnRenderer
 
@@ -152,20 +156,23 @@ async def test_long_answer_streaming_scales_linearly():
         async def edit_message(self, c, m, t): return True
         async def send_message(self, c, t, reply_to=None): return 1
 
-    async def stream(count: int) -> float:
-        r = TurnRenderer(1, TG(), 10, edit_interval=0)
+    r = TurnRenderer(1, TG(), 10, edit_interval=0)
+
+    async def block(count: int) -> float:
         started = time.perf_counter()
         for _ in range(count):
             await r.on_event(StreamEvent("content", "xxxxx"))
-        elapsed = time.perf_counter() - started
-        assert len(r.answer_text) == count * 5
-        return elapsed
+        return time.perf_counter() - started
 
-    small = await stream(2_000)
-    big = await stream(8_000)
-    # Linear: ~4x. Quadratic would be ~16x. The margin absorbs timer noise on a
-    # small/slow host, where the absolute cost is meaningless.
-    assert big < max(small, 0.01) * 8, f"streaming looks quadratic: {small:.3f}s -> {big:.3f}s"
+    first = await block(2_000)
+    for _ in range(8_000):
+        await r.on_event(StreamEvent("content", "xxxxx"))
+    last = await block(2_000)
+
+    assert len(r.answer_text) == 60_000
+    # Quadratic would make the last block ~6x the first (work per event grows
+    # with the answer); linear keeps them within noise of each other.
+    assert last < max(first, 1e-4) * 3, f"cost grows with length: {first:.4f}s -> {last:.4f}s"
 
 
 async def test_display_keeps_the_tail_of_a_long_answer():
