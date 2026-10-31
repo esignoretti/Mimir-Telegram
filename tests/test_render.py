@@ -143,23 +143,29 @@ async def test_dead_placeholder_is_not_retried():
     assert tg.calls == 1, f"retried a dead placeholder {tg.calls} times"
 
 
-async def test_long_answer_streaming_stays_linear():
-    """`answer += chunk` per SSE event was quadratic; 100k chars must stay fast."""
+async def test_long_answer_streaming_scales_linearly():
+    """`answer += chunk` per SSE event was quadratic; 4x the chunks must cost ~4x."""
     import time
     from mimir_bot.render import TurnRenderer
 
     class TG:
-        def __init__(self): self.last = None
-        async def edit_message(self, c, m, t): self.last = t; return True
+        async def edit_message(self, c, m, t): return True
         async def send_message(self, c, t, reply_to=None): return 1
 
-    r = TurnRenderer(1, TG(), 10, edit_interval=0)
-    started = time.perf_counter()
-    for _ in range(20_000):
-        await r.on_event(StreamEvent("content", "xxxxx"))
-    elapsed = time.perf_counter() - started
-    assert len(r.answer_text) == 100_000
-    assert elapsed < 2.0, f"streaming looks quadratic: {elapsed:.2f}s"
+    async def stream(count: int) -> float:
+        r = TurnRenderer(1, TG(), 10, edit_interval=0)
+        started = time.perf_counter()
+        for _ in range(count):
+            await r.on_event(StreamEvent("content", "xxxxx"))
+        elapsed = time.perf_counter() - started
+        assert len(r.answer_text) == count * 5
+        return elapsed
+
+    small = await stream(2_000)
+    big = await stream(8_000)
+    # Linear: ~4x. Quadratic would be ~16x. The margin absorbs timer noise on a
+    # small/slow host, where the absolute cost is meaningless.
+    assert big < max(small, 0.01) * 8, f"streaming looks quadratic: {small:.3f}s -> {big:.3f}s"
 
 
 async def test_display_keeps_the_tail_of_a_long_answer():
