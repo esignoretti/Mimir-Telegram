@@ -11,7 +11,7 @@ Caddy route, no certificate and no firewall change.
 | --- | --- |
 | `/opt/mimir-telegram` | code + venv, owned by `mimir` |
 | `/opt/mimir-telegram/.env` | secrets, mode `600`, owned by `mimir` |
-| `/var/lib/mimir-telegram/bot.db` | SQLite database (the only writable path) |
+| `/var/lib/mimir-telegram/mimir.db` | SQLite database (the only writable path) |
 | `/etc/systemd/system/mimir-telegram.service` | the unit |
 
 ## First install
@@ -29,7 +29,8 @@ ssh root@hygro.signocloud.it 'mkdir -p /opt/mimir-telegram /var/lib/mimir-telegr
   && chown mimir:mimir /opt/mimir-telegram /var/lib/mimir-telegram'
 
 # 2. code and venv
-rsync -az --exclude .git --exclude .venv --exclude .superpowers \
+rsync -az --exclude .git --exclude .venv --exclude venv --exclude .env \
+  --exclude .superpowers --exclude .pytest_cache --exclude __pycache__ \
   ./ root@hygro.signocloud.it:/opt/mimir-telegram/
 ssh root@hygro.signocloud.it 'cd /opt/mimir-telegram \
   && python3 -m venv venv && venv/bin/pip install -q -U pip \
@@ -44,7 +45,7 @@ ssh root@hygro.signocloud.it 'umask 077; cat > /opt/mimir-telegram/.env' <<'EOF'
 TELEGRAM_BOT_TOKEN=...
 MIMIR_API_KEY=...
 ALLOWED_TELEGRAM_USER_IDS=...
-DB_PATH=/var/lib/mimir-telegram/bot.db
+DB_PATH=/var/lib/mimir-telegram/mimir.db
 DEFAULT_MODEL=vllm/mimir-slim
 DEFAULT_EFFORT=none
 LOG_LEVEL=INFO
@@ -62,7 +63,8 @@ ssh root@hygro.signocloud.it 'systemctl daemon-reload \
 ## Updating
 
 ```bash
-rsync -az --exclude .git --exclude .venv --exclude .superpowers \
+rsync -az --exclude .git --exclude .venv --exclude venv --exclude .env \
+  --exclude .superpowers --exclude .pytest_cache --exclude __pycache__ \
   ./ root@hygro.signocloud.it:/opt/mimir-telegram/
 ssh root@hygro.signocloud.it 'chown -R mimir:mimir /opt/mimir-telegram \
   && systemctl restart mimir-telegram && journalctl -u mimir-telegram -n 20 --no-pager'
@@ -94,24 +96,35 @@ ssh root@hygro.signocloud.it 'ss -tlnp'
 
 ## Deploying without destroying host-local state
 
-`rsync --delete` is the convenient way to push code, but three paths exist only
-on the host and must be excluded or they are deleted with everything else:
+`rsync --delete` is the convenient way to push code, but some paths exist only on
+the host and are deleted with everything else unless excluded:
 
 ```bash
 rsync -az --delete -e ssh \
-  --exclude .git --exclude .venv --exclude venv \
+  --exclude .git --exclude .venv --exclude venv --exclude .env \
   --exclude .superpowers --exclude .pytest_cache --exclude __pycache__ \
-  --exclude .env \
   ./ root@hygro.signocloud.it:/opt/mimir-telegram/
 ```
 
-- `.env` — secrets, never in git.
-- `venv/` — the host venv (the local one is `.venv/`, a different name).
+- `.env` — secrets, never in git. Losing it makes the unit fail with
+  `Failed to load environment files: No such file or directory`.
+- `venv/` — the host venv. The local one is `.venv/`; excluding the wrong name
+  deletes the host's.
 - `__pycache__/`, `.pytest_cache/` — noise, but `--delete` makes them matter.
 
-If `venv/` is lost, rebuild it; do not run `pip install -e .` on the host:
+If `venv/` is lost, rebuild it:
 
 ```bash
-cd /opt/mimir-telegram && python3 -m venv venv
-venv/bin/pip install httpx==0.28.1 aiosqlite==0.22.1
+cd /opt/mimir-telegram && python3 -m venv venv \
+  && venv/bin/pip install httpx==0.28.1 aiosqlite==0.22.1 \
+  && chown -R mimir:mimir /opt/mimir-telegram
 ```
+
+## If the service will not start
+
+A bad `.env` exits with status `78` (`EX_CONFIG`) and one stderr line, e.g.
+`mimir-telegram: TELEGRAM_BOT_TOKEN is required`. That status is listed in
+`RestartPreventExitStatus=78`, so systemd parks the unit in `failed` instead of
+crash-looping; `StartLimitBurst=5` per 5 minutes caps any other loop. Read the
+reason with `journalctl -u mimir-telegram -n 20 --no-pager`, then
+`systemctl reset-failed mimir-telegram` before starting again.
