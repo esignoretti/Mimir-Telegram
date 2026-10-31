@@ -175,3 +175,19 @@ async def test_display_keeps_the_tail_of_a_long_answer():
     shown = r._display()
     assert len(shown.encode("utf-16-le")) // 2 <= MESSAGE_LIMIT
     assert r.answer_text.endswith(shown)
+
+
+async def test_throttled_chunks_do_not_build_the_display():
+    """Only ~1 edit per interval is worth any work; the rest must be free."""
+    from mimir_bot.render import TurnRenderer
+
+    class TG:
+        async def edit_message(self, c, m, t): return True
+        async def send_message(self, c, t, reply_to=None): return 1
+
+    calls = []
+    r = TurnRenderer(1, TG(), 10, edit_interval=3600)
+    r._display = lambda: calls.append(1) or "x"
+    for _ in range(100):
+        await r.on_event(StreamEvent("content", "y"))
+    assert len(calls) <= 1, f"display built {len(calls)} times while throttled"

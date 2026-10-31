@@ -162,11 +162,13 @@ class TurnRenderer:
             # The message was deleted or rejected; retrying it every throttle
             # tick would spend the rest of the turn on doomed API calls.
             return
-        display = self._display()
-        if display == self._last_sent_text:
-            return
+        # Throttle first: building the display costs a slice of the answer, and
+        # the answer arrives in thousands of chunks per turn.
         now = time.monotonic()
         if not force and now - self._last_edit_at < self.edit_interval:
+            return
+        display = self._display()
+        if display == self._last_sent_text:
             return
         self._last_edit_at = now
         try:
