@@ -1,0 +1,37 @@
+[Unit]
+Description=Mimir Telegram bridge
+Documentation=file:///opt/mimir-telegram/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mimir
+Group=mimir
+WorkingDirectory=/opt/mimir-telegram
+EnvironmentFile=/opt/mimir-telegram/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/mimir-telegram/src
+ExecStart=/opt/mimir-telegram/venv/bin/python -m mimir_bot
+
+Restart=always
+RestartSec=5
+
+# The bot only needs outbound HTTPS; it listens on nothing.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/mimir-telegram
+
+[Install]
+WantedBy=multi-user.target
