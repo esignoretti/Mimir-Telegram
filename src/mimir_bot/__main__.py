@@ -23,6 +23,11 @@ async def main() -> None:
     )
     log = logging.getLogger("mimir_bot")
 
+    # httpx logs every request URL at INFO, and those URLs contain the bot token
+    # and the API key path. Keep the transport quiet so journald never sees it.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=None,
                                                       write=30, pool=10)) as client:
         store = Store(cfg.db_path)

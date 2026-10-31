@@ -31,3 +31,19 @@ async def test_send_message_returns_message_id():
     def handler(req):
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
     assert await make(handler).send_message(1, "hi") == 42
+
+
+async def test_errors_never_leak_the_token():
+    def handler(req):
+        return httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    tg = make(handler)
+    with pytest.raises(RuntimeError) as exc:
+        await tg.get_updates(offset=0)
+    assert "123:abc" not in str(exc.value)
+
+    def boom(req):
+        raise httpx.ConnectError(f"failed to reach {req.url}")
+    tg2 = make(boom)
+    with pytest.raises(RuntimeError) as exc2:
+        await tg2.send_message(1, "hi")
+    assert "123:abc" not in str(exc2.value)

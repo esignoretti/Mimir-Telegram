@@ -26,9 +26,19 @@ class Telegram:
         self.token = token
         self.client = client
 
+    def _scrub(self, text: str) -> str:
+        """Never let the bot token reach a log line or a Telegram message."""
+        return text.replace(self.token, "<token>")
+
     async def _call(self, method: str, payload: dict, soft: bool = False) -> dict:
         url = API_ROOT.format(token=self.token, method=method)
-        resp = await self.client.post(url, json=payload)
+        try:
+            resp = await self.client.post(url, json=payload)
+        except httpx.HTTPError as exc:
+            # httpx exception text can include the request URL, i.e. the token.
+            raise RuntimeError(
+                self._scrub(f"telegram {method} failed: {exc}")
+            ) from None
         try:
             body = resp.json()
         except ValueError:
@@ -41,7 +51,7 @@ class Telegram:
             log.debug("telegram %s: %s", method, body.get("description"))
             return body
         description = body.get("description") or resp.text
-        raise RuntimeError(f"telegram {method} failed: {description}")
+        raise RuntimeError(self._scrub(f"telegram {method} failed: {description}"))
 
     async def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
         body = await self._call(
@@ -71,10 +81,15 @@ class Telegram:
 
     async def edit_message(self, chat_id: int, message_id: int, text: str) -> bool:
         url = API_ROOT.format(token=self.token, method="editMessageText")
-        resp = await self.client.post(
-            url,
-            json={"chat_id": chat_id, "message_id": message_id, "text": text},
-        )
+        try:
+            resp = await self.client.post(
+                url,
+                json={"chat_id": chat_id, "message_id": message_id, "text": text},
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                self._scrub(f"telegram editMessageText failed: {exc}")
+            ) from None
         try:
             body = resp.json()
         except ValueError:
@@ -84,7 +99,7 @@ class Telegram:
         description = body.get("description") or resp.text
         if NOT_MODIFIED in description:
             return False
-        raise RuntimeError(f"telegram editMessageText failed: {description}")
+        raise RuntimeError(self._scrub(f"telegram editMessageText failed: {description}"))
 
     async def send_typing(self, chat_id: int) -> None:
         try:
