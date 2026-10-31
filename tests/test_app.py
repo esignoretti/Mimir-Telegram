@@ -205,3 +205,15 @@ async def test_maintenance_prunes_on_a_freshly_booted_host(tmp_path):
     last_prune = 5.0 - 86_400  # what run() now initialises
     await app._maintenance(last_health, last_prune)
     assert pruned == [90]
+
+
+async def test_disallowed_user_id_is_logged_for_setup(tmp_path, caplog):
+    """The owner needs the numeric id in the log to fill in the allowlist."""
+    import logging
+    edits = []
+    app, _ = await build(tmp_path, edits)
+    with caplog.at_level(logging.WARNING, logger="mimir_bot.app"):
+        await app.handle_update(upd(999, "hi"))
+    assert edits == []
+    assert "999" in caplog.text
+    assert "disallowed" in caplog.text

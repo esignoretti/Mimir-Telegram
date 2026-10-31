@@ -69,7 +69,16 @@ class App:
 
     async def handle_update(self, update: dict) -> None:
         if not is_allowed(update, self.cfg.allowed_user_ids):
-            log.info("ignoring update from disallowed user")
+            # Log the id so the owner can copy it into ALLOWED_TELEGRAM_USER_IDS.
+            # The bot token is the secret here; a numeric user id is not, and
+            # without this the first setup attempt is a silent black hole.
+            message = _message(update) or {}
+            sender = message.get("from") or {}
+            log.warning(
+                "ignoring update from disallowed user id=%s username=@%s",
+                sender.get("id"),
+                sender.get("username"),
+            )
             return
 
         message = _message(update)
