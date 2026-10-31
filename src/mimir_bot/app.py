@@ -168,7 +168,7 @@ class App:
             log.warning("healthcheck failed: %s", exc)
 
     async def shutdown(self) -> None:
-        for chat_id in list(self.lock._tasks):
+        for chat_id in self.lock.chat_ids():
             with contextlib.suppress(BaseException):
                 await self.lock.cancel(chat_id)
         await self.store.close()

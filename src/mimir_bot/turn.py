@@ -57,6 +57,9 @@ class GenerationLock:
             return None
         return task
 
+    def chat_ids(self) -> list[int]:
+        return [cid for cid, task in self._tasks.items() if not task.done()]
+
     async def replace(self, chat_id: int, coro) -> asyncio.Task:
         existing = self._tasks.get(chat_id)
         if existing is not None and not existing.done():
