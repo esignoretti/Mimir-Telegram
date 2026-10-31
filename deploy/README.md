@@ -17,6 +17,11 @@ Caddy route, no certificate and no firewall change.
 ## First install
 
 ```bash
+# 0. prerequisites: python >= 3.12 and the venv module
+ssh root@hygro.signocloud.it 'python3 --version'
+ssh root@hygro.signocloud.it 'python3 -m venv --help >/dev/null 2>&1 \
+  || apt-get install -y python3-venv'
+
 # 1. service account (no login shell, no home directory to speak of)
 ssh root@hygro.signocloud.it 'id mimir 2>/dev/null || useradd --system \
   --home /opt/mimir-telegram --shell /usr/sbin/nologin mimir'
@@ -28,10 +33,13 @@ rsync -az --exclude .git --exclude .venv --exclude .superpowers \
   ./ root@hygro.signocloud.it:/opt/mimir-telegram/
 ssh root@hygro.signocloud.it 'cd /opt/mimir-telegram \
   && python3 -m venv venv && venv/bin/pip install -q -U pip \
-  && venv/bin/pip install -q httpx aiosqlite \
+  && venv/bin/pip install -q httpx==0.28.1 aiosqlite==0.22.1 \
   && chown -R mimir:mimir /opt/mimir-telegram'
 
 # 3. secrets
+# DB_PATH must be under /var/lib/mimir-telegram: the unit runs with
+# ProtectSystem=strict, so WorkingDirectory is not writable and a fallback
+# relative path would fail at startup and crash-loop under Restart=always.
 ssh root@hygro.signocloud.it 'umask 077; cat > /opt/mimir-telegram/.env' <<'EOF'
 TELEGRAM_BOT_TOKEN=...
 MIMIR_API_KEY=...

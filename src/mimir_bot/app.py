@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 PLACEHOLDER = "…"
 POLL_TIMEOUT = 30
+#: Backoff after a failed poll, so a down API is not hammered.
+POLL_RETRY_SECONDS = 3
 HEALTHCHECK_INTERVAL = 60
 PRUNE_INTERVAL = 86_400
 
@@ -154,22 +156,35 @@ class App:
                         await self.handle_update(update)
                     except Exception:
                         log.exception("update %s failed", update.get("update_id"))
-
-                now = time.monotonic()
-                if self.cfg.healthcheck_url and now - last_health > HEALTHCHECK_INTERVAL:
-                    last_health = now
-                    await self._healthcheck()
-                if now - last_prune > PRUNE_INTERVAL:
-                    last_prune = now
-                    removed = await self.store.prune(self.cfg.retention_days)
-                    if removed:
-                        log.info("pruned %s messages older than %s days", removed,
-                                 self.cfg.retention_days)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("poll failed: %s", exc)
-                await asyncio.sleep(3)
+                await asyncio.sleep(POLL_RETRY_SECONDS)
+
+            # Maintenance runs whether or not the poll succeeded: a wedged
+            # long-poll would otherwise also stop pruning and health checks.
+            last_health, last_prune = await self._maintenance(last_health, last_prune)
+
+    async def _maintenance(self, last_health: float, last_prune: float) -> tuple[float, float]:
+        now = time.monotonic()
+        if self.cfg.healthcheck_url and now - last_health > HEALTHCHECK_INTERVAL:
+            last_health = now
+            await self._healthcheck()
+        if now - last_prune > PRUNE_INTERVAL:
+            last_prune = now
+            try:
+                removed = await self.store.prune(self.cfg.retention_days)
+            except Exception as exc:
+                log.warning("prune failed: %s", exc)
+            else:
+                if removed:
+                    log.info(
+                        "pruned %s messages older than %s days",
+                        removed,
+                        self.cfg.retention_days,
+                    )
+        return last_health, last_prune
 
     async def _healthcheck(self) -> None:
         url = self.cfg.healthcheck_url

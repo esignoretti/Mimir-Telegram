@@ -142,3 +142,35 @@ async def test_edit_failure_does_not_lose_the_answer(tmp_path):
     assert any("the answer" in s for s in tg.sent)
     hist = await store.history(100, 100_000)
     assert hist[-1]["content"] == "the answer"
+
+
+async def test_prune_runs_even_when_polling_fails(tmp_path, monkeypatch):
+    """A wedged long-poll must not stop maintenance."""
+    pruned = []
+    class TG:
+        async def get_updates(self, offset, timeout=30):
+            raise RuntimeError("network is down")
+        async def edit_message(self, c, m, t): return True
+        async def send_message(self, c, t, reply_to=None): return 1
+    class M:
+        async def stream(self, *a, **k):
+            return
+            yield
+    class CountingStore(Store):
+        async def prune(self, days):
+            pruned.append(days)
+            return 0
+    store = CountingStore(str(tmp_path / "t.db")); await store.init()
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    app = App(cfg, store, TG(), M())
+    from mimir_bot import app as app_mod
+    monkeypatch.setattr(app_mod, "POLL_RETRY_SECONDS", 0)
+    task = asyncio.create_task(app.run())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert pruned == [90]
