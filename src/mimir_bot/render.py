@@ -35,16 +35,26 @@ def thinking_label(reasoning_chars: int) -> str:
 
 
 def tail_within(text: str, limit: int) -> str:
-    """The longest suffix of ``text`` that fits in ``limit`` UTF-16 units."""
+    """The longest suffix of ``text`` that fits in ``limit`` UTF-16 units.
+
+    Called once per streamed chunk, so this must not be quadratic: take the cheap
+    slice first (at most ``limit`` code points) and only count units when that
+    slice is actually too wide, i.e. when it contains astral characters.
+    """
+    chunk = text[-limit:]
+    if chunk.isascii() or _units(chunk) <= limit:
+        return chunk
+
+    # Walk back from the end, at most ``limit`` characters, summing widths.
     used = 0
-    start = len(text)
+    start = len(chunk)
     while start > 0:
-        width = len(text[start - 1].encode("utf-16-le")) // 2
+        width = len(chunk[start - 1].encode("utf-16-le")) // 2
         if used + width > limit:
             break
         used += width
         start -= 1
-    return text[start:]
+    return chunk[start:]
 
 
 def _units(text: str) -> int:

@@ -104,3 +104,24 @@ def test_tail_within_keeps_the_end():
     assert tail_within("abcdef", 3) == "def"
     assert tail_within("ab", 10) == "ab"
     assert tail_within("\U0001F600\U0001F600", 3) == "\U0001F600"
+
+
+def test_tail_within_is_linear_on_a_long_answer():
+    import time
+    from mimir_bot.render import tail_within
+    text = ""
+    started = time.perf_counter()
+    for _ in range(5000):
+        text += "x" * 5
+        tail_within(text, 4096)
+    elapsed = time.perf_counter() - started
+    # The quadratic version took ~20s for this loop; keep a wide margin.
+    assert elapsed < 1.0, f"tail_within looks quadratic: {elapsed:.2f}s"
+
+
+def test_tail_within_handles_astral_characters():
+    from mimir_bot.render import tail_within
+    text = "a" + "\U0001F600" * 3000
+    out = tail_within(text, 4096)
+    assert len(out.encode("utf-16-le")) // 2 <= 4096
+    assert text.endswith(out)
