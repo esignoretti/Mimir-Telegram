@@ -39,7 +39,7 @@ ssh root@hygro.signocloud.it 'cd /opt/mimir-telegram \
 # 3. secrets
 # DB_PATH must be under /var/lib/mimir-telegram: the unit runs with
 # ProtectSystem=strict, so WorkingDirectory is not writable and a fallback
-# relative path would fail at startup and crash-loop under Restart=always.
+# relative path would fail at startup and crash-loop under Restart=always (capped by StartLimitBurst=5 per 5 min).
 ssh root@hygro.signocloud.it 'umask 077; cat > /opt/mimir-telegram/.env' <<'EOF'
 TELEGRAM_BOT_TOKEN=...
 MIMIR_API_KEY=...

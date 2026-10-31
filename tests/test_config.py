@@ -36,3 +36,20 @@ def test_models_table_matches_spec():
         "vllm/mimir-slim": 262144,
         "vllm/mimir-vision": 131072,
     }
+
+
+def test_entrypoint_exits_78_on_a_missing_token(monkeypatch, capsys):
+    """EX_CONFIG (78) stops systemd restarting a service whose .env is blank."""
+    import subprocess
+    import sys
+
+    env = {"MIMIR_API_KEY": "k", "ALLOWED_TELEGRAM_USER_IDS": "1"}
+    result = subprocess.run(
+        [sys.executable, "-m", "mimir_bot"],
+        capture_output=True,
+        text=True,
+        env={**env, "PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
+        timeout=30,
+    )
+    assert result.returncode == 78, result.stderr
+    assert "TELEGRAM_BOT_TOKEN is required" in result.stderr

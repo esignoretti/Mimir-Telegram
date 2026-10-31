@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 
 import httpx
 
@@ -15,8 +16,20 @@ from .store import Store
 from .telegram import Telegram
 
 
+CONFIG_ERROR = 78  # EX_CONFIG: systemd must not restart on a bad .env
+
+
+def _fail(message: str) -> None:
+    """A configuration error is not transient: report it once and stop."""
+    print(f"mimir-telegram: {message}", file=sys.stderr)
+    raise SystemExit(CONFIG_ERROR)
+
+
 async def main() -> None:
-    cfg = Config.from_env(os.environ)
+    try:
+        cfg = Config.from_env(os.environ)
+    except ValueError as exc:
+        _fail(str(exc))
     logging.basicConfig(
         level=cfg.log_level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
