@@ -1,5 +1,5 @@
 # tests/test_photos.py
-import base64, pytest
+import base64
 from mimir_bot.turn import image_content, TurnRunner
 from mimir_bot.mimir import StreamEvent
 from mimir_bot.store import Store

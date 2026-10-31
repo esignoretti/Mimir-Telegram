@@ -1,6 +1,5 @@
 # tests/test_app.py
 import asyncio
-import pytest
 from mimir_bot.app import App, is_allowed
 from mimir_bot.config import Config
 from mimir_bot.store import Store

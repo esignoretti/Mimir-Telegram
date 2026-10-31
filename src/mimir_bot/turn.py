@@ -17,7 +17,7 @@ import contextlib
 import logging
 
 from .config import Config
-from .mimir import MimirClient, StreamEvent
+from .mimir import MimirClient
 from .render import TurnRenderer
 from .store import Store
 

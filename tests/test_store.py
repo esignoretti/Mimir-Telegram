@@ -1,5 +1,4 @@
 # tests/test_store.py
-import pytest
 from mimir_bot.store import Store
 
 async def make_store(tmp_path):

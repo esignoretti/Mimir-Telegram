@@ -1,5 +1,4 @@
 # tests/test_commands.py
-import pytest
 from mimir_bot.commands import handle_command, resolve_model, models_menu
 from mimir_bot.config import Config, MODELS
 from mimir_bot.store import Store

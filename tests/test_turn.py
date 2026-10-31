@@ -1,5 +1,4 @@
 # tests/test_turn.py
-import pytest
 from mimir_bot.turn import TurnRunner, build_request
 from mimir_bot.mimir import StreamEvent
 

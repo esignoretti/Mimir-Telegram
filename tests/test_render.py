@@ -1,5 +1,4 @@
 # tests/test_render.py
-import pytest
 from mimir_bot.render import TurnRenderer, split_message, thinking_label
 from mimir_bot.mimir import StreamEvent
 
