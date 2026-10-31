@@ -63,3 +63,74 @@ async def test_run_sends_error_text_and_persists_nothing(tmp_path):
     assert answer == ""
     assert "nope" in tg.edits[-1]
     assert await store.history(7, 100_000) == []
+
+
+def test_token_budget_is_capped_by_the_model_window():
+    from mimir_bot.turn import token_budget, RESPONSE_HEADROOM
+    # mimir-vision has the smallest window; a 200k configured budget must shrink.
+    assert token_budget("vllm/mimir-vision", 200_000) == 131_072 - RESPONSE_HEADROOM
+    assert token_budget("vllm/mimir", 200_000) == 200_000
+    assert token_budget("unknown/model", 200_000) == 200_000
+
+
+async def test_reasoning_only_turn_persists_a_visible_placeholder(tmp_path):
+    from mimir_bot.store import Store
+    from mimir_bot.config import Config
+    store = Store(str(tmp_path / "t.db")); await store.init()
+    mimir = FakeMimir([StreamEvent("reasoning", "thoughts")])
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    await TurnRunner(store, mimir, cfg).run(7, "q", FakeTG(), 10)
+    hist = await store.history(7, 100_000)
+    assert [m["role"] for m in hist] == ["user", "assistant"]
+    assert hist[1]["content"].strip() != ""
+
+
+async def test_cancel_after_first_event_drops_the_user_row(tmp_path):
+    import asyncio
+    from mimir_bot.store import Store
+    from mimir_bot.config import Config
+    store = Store(str(tmp_path / "t.db")); await store.init()
+    class Slow:
+        async def stream(self, messages, model, effort, max_tokens=None):
+            yield StreamEvent("content", "partial")
+            await asyncio.sleep(10)
+            yield StreamEvent("content", "never")
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    task = asyncio.create_task(TurnRunner(store, Slow(), cfg).run(7, "q", FakeTG(), 10))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert await store.history(7, 100_000) == []
+
+
+async def test_failed_turn_drops_the_user_row(tmp_path):
+    from mimir_bot.store import Store
+    from mimir_bot.config import Config
+    store = Store(str(tmp_path / "t.db")); await store.init()
+    class HalfBroken:
+        async def stream(self, messages, model, effort, max_tokens=None):
+            yield StreamEvent("content", "start")
+            raise RuntimeError("connection reset")
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    tg = FakeTG()
+    await TurnRunner(store, HalfBroken(), cfg).run(7, "q", tg, 10)
+    assert await store.history(7, 100_000) == []
+    assert "connection reset" in tg.edits[-1]
+
+
+async def test_lock_forgets_finished_tasks(tmp_path):
+    import asyncio
+    from mimir_bot.turn import GenerationLock
+    lock = GenerationLock()
+    async def work(): return 1
+    await lock.replace(7, work())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert lock.chat_ids() == []
+    assert lock.current(7) is None

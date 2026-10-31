@@ -47,3 +47,21 @@ async def test_prune_removes_old_messages(tmp_path):
     assert await s.prune(0) == 0        # 0 = keep forever
     assert await s.prune(90) == 0       # fresh row is not old
     assert len(await s.history(5, 100_000)) == 1
+
+
+async def test_store_uses_configured_defaults(tmp_path):
+    s = Store(str(tmp_path / "t.db"), "vllm/mimir-pro", "high")
+    await s.init()
+    chat = await s.get_chat(5)
+    assert chat.model == "vllm/mimir-pro"
+    assert chat.effort == "high"
+
+
+async def test_delete_message_removes_only_that_row(tmp_path):
+    s = await make_store(tmp_path)
+    keep = await s.add_message(5, "user", "keep")
+    drop = await s.add_message(5, "user", "drop")
+    await s.delete_message(drop)
+    hist = await s.history(5, 100_000)
+    assert [m["content"] for m in hist] == ["keep"]
+    assert keep != drop

@@ -60,3 +60,47 @@ def test_split_message_preserves_all_characters():
 
 def test_split_message_short_text_single_part():
     assert split_message("hi") == ["hi"]
+
+
+async def test_rate_limited_edit_is_skipped_not_fatal():
+    from mimir_bot.telegram import RateLimited
+    class TG:
+        def __init__(self): self.edits = []
+        async def edit_message(self, c, m, t):
+            raise RateLimited("too many requests", retry_after=5)
+        async def send_message(self, c, t, reply_to=None): return 1
+    tg = TG()
+    r = TurnRenderer(1, tg, 10, edit_interval=0)
+    await r.on_event(StreamEvent("content", "partial"))
+    await r.on_event(StreamEvent("content", " more"))
+    await r.finish(final_text="partial more")
+    assert r.answer_text == "partial more"
+
+async def test_failed_final_edit_still_delivers_the_answer():
+    class TG:
+        def __init__(self): self.sent = []; self.edits = 0
+        async def edit_message(self, c, m, t):
+            self.edits += 1
+            raise RuntimeError("Bad Request: message to edit not found")
+        async def send_message(self, c, t, reply_to=None):
+            self.sent.append(t); return 1
+    tg = TG()
+    r = TurnRenderer(1, tg, 10, edit_interval=0)
+    await r.on_event(StreamEvent("content", "the answer"))
+    await r.finish(final_text="the answer")
+    assert tg.edits >= 1
+    assert tg.sent and tg.sent[0] == "the answer"
+
+def test_split_message_counts_utf16_units():
+    # Each astral emoji is 1 code point but 2 UTF-16 units.
+    text = "\U0001F600" * 3000
+    parts = split_message(text, limit=4096)
+    assert "".join(parts) == text
+    assert all(len(p.encode("utf-16-le")) // 2 <= 4096 for p in parts)
+    assert len(parts) == 2
+
+def test_tail_within_keeps_the_end():
+    from mimir_bot.render import tail_within
+    assert tail_within("abcdef", 3) == "def"
+    assert tail_within("ab", 10) == "ab"
+    assert tail_within("\U0001F600\U0001F600", 3) == "\U0001F600"

@@ -20,6 +20,25 @@ API_ROOT = "https://api.telegram.org/bot{token}/{method}"
 #: Telegram rejects edits whose text is unchanged; that is not an error here.
 NOT_MODIFIED = "message is not modified"
 
+#: Returned when the chat is being edited faster than Telegram allows.
+RETRY_AFTER_KEY = "retry_after"
+
+
+class RateLimited(RuntimeError):
+    """A 429 from the Bot API, carrying the delay Telegram asked for."""
+
+    def __init__(self, message: str, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after(body: dict, default: float = 1.0) -> float:
+    raw = (body.get("parameters") or {}).get(RETRY_AFTER_KEY)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
 
 class Telegram:
     def __init__(self, token: str, client: httpx.AsyncClient) -> None:
@@ -51,7 +70,10 @@ class Telegram:
             log.debug("telegram %s: %s", method, body.get("description"))
             return body
         description = body.get("description") or resp.text
-        raise RuntimeError(self._scrub(f"telegram {method} failed: {description}"))
+        error = self._scrub(f"telegram {method} failed: {description}")
+        if resp.status_code == 429:
+            raise RateLimited(error, _retry_after(body))
+        raise RuntimeError(error)
 
     async def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
         body = await self._call(
@@ -99,7 +121,10 @@ class Telegram:
         description = body.get("description") or resp.text
         if NOT_MODIFIED in description:
             return False
-        raise RuntimeError(self._scrub(f"telegram editMessageText failed: {description}"))
+        error = self._scrub(f"telegram editMessageText failed: {description}")
+        if resp.status_code == 429:
+            raise RateLimited(error, _retry_after(body))
+        raise RuntimeError(error)
 
     async def send_typing(self, chat_id: int) -> None:
         try:
@@ -117,8 +142,18 @@ class Telegram:
     async def photo_data_url(self, file_id: str) -> str:
         """Download a photo and inline it as a data URL the vision model accepts."""
         url = await self.get_file_url(file_id)
-        resp = await self.client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await self.client.get(url)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # The URL embeds the token and a file path; report neither.
+            raise RuntimeError(
+                f"telegram file download failed: HTTP {exc.response.status_code}"
+            ) from None
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                self._scrub(f"telegram file download failed: {exc}")
+            ) from None
         mime = resp.headers.get("content-type") or "image/jpeg"
         encoded = base64.b64encode(resp.content).decode("ascii")
         return f"data:{mime};base64,{encoded}"

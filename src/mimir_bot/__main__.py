@@ -30,7 +30,7 @@ async def main() -> None:
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=None,
                                                       write=30, pool=10)) as client:
-        store = Store(cfg.db_path)
+        store = Store(cfg.db_path, cfg.default_model, cfg.default_effort)
         await store.init()
         app = App(cfg, store, Telegram(cfg.telegram_token, client),
                   MimirClient(cfg.mimir_base_url, cfg.mimir_api_key, client))

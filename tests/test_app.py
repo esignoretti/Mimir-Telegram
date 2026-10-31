@@ -89,3 +89,56 @@ async def test_turn_crash_is_logged_not_swallowed(tmp_path, caplog):
         await app.idle()
     messages = [r.getMessage() for r in caplog.records]
     assert any("turn crashed" in m and "disk full" in m for m in messages)
+
+
+async def test_second_message_interrupts_after_streaming_started(tmp_path):
+    """The real case: cancel lands after the turn has produced an event."""
+    edits = []
+    class TG:
+        async def edit_message(self, c, m, t): edits.append(t); return True
+        async def send_message(self, c, t, reply_to=None): edits.append(t); return 1
+    class M:
+        """First call stalls after one event; the second answers immediately."""
+        def __init__(self): self.calls = 0
+        async def stream(self, messages, model, effort, max_tokens=None):
+            from mimir_bot.mimir import StreamEvent
+            self.calls += 1
+            if self.calls == 1:
+                yield StreamEvent("content", "first-partial")
+                await asyncio.sleep(5)
+                yield StreamEvent("content", "never")
+            else:
+                yield StreamEvent("content", "second-answer")
+    store = Store(str(tmp_path / "t.db")); await store.init()
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    app = App(cfg, store, TG(), M())
+    await app.handle_update(upd(1, "first"))
+    await asyncio.sleep(0.05)
+    await app.handle_update(upd(1, "second"))
+    await app.idle()
+    hist = await store.history(100, 100_000)
+    assert [m["content"] for m in hist] == ["second", "second-answer"]
+    assert "[interrupted]" in edits
+
+
+async def test_edit_failure_does_not_lose_the_answer(tmp_path):
+    from mimir_bot.mimir import StreamEvent
+    class TG:
+        def __init__(self): self.sent = []
+        async def edit_message(self, c, m, t):
+            raise RuntimeError("telegram editMessageText failed: Bad Request")
+        async def send_message(self, c, t, reply_to=None): self.sent.append(t); return 1
+    class M:
+        async def stream(self, messages, model, effort, max_tokens=None):
+            yield StreamEvent("content", "the answer")
+    store = Store(str(tmp_path / "t.db")); await store.init()
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    tg = TG()
+    app = App(cfg, store, tg, M())
+    await app.handle_update(upd(1, "question"))
+    await app.idle()
+    assert any("the answer" in s for s in tg.sent)
+    hist = await store.history(100, 100_000)
+    assert hist[-1]["content"] == "the answer"

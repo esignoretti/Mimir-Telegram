@@ -16,9 +16,6 @@ import aiosqlite
 #: Measured against the live API: 104,889 chars -> 22,952 prompt tokens.
 CHARS_PER_TOKEN = 4.6
 
-DEFAULT_MODEL = "vllm/mimir-slim"
-DEFAULT_EFFORT = "none"
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chats (
     chat_id INTEGER PRIMARY KEY,
@@ -49,8 +46,12 @@ def estimate_tokens(text: str) -> float:
 
 
 class Store:
-    def __init__(self, path: str) -> None:
+    def __init__(
+        self, path: str, default_model: str = "vllm/mimir-slim", default_effort: str = "none"
+    ) -> None:
         self.path = path
+        self.default_model = default_model
+        self.default_effort = default_effort
         self._db: aiosqlite.Connection | None = None
 
     async def init(self) -> None:
@@ -78,10 +79,10 @@ class Store:
             return ChatSettings(chat_id, row[0], row[1])
         await self.db.execute(
             "INSERT INTO chats (chat_id, model, effort) VALUES (?, ?, ?)",
-            (chat_id, DEFAULT_MODEL, DEFAULT_EFFORT),
+            (chat_id, self.default_model, self.default_effort),
         )
         await self.db.commit()
-        return ChatSettings(chat_id, DEFAULT_MODEL, DEFAULT_EFFORT)
+        return ChatSettings(chat_id, self.default_model, self.default_effort)
 
     async def set_model(self, chat_id: int, model: str) -> None:
         await self.get_chat(chat_id)
@@ -107,12 +108,17 @@ class Store:
         role: str,
         content: str,
         model: str | None = None,
-    ) -> None:
-        await self.db.execute(
+    ) -> int:
+        cur = await self.db.execute(
             "INSERT INTO messages (chat_id, role, content, model, ts) "
             "VALUES (?, ?, ?, ?, ?)",
             (chat_id, role, content, model, time.time()),
         )
+        await self.db.commit()
+        return int(cur.lastrowid or 0)
+
+    async def delete_message(self, message_id: int) -> None:
+        await self.db.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         await self.db.commit()
 
     async def history(self, chat_id: int, token_budget: int) -> list[dict[str, str]]:
