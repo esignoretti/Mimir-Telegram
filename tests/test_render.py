@@ -65,16 +65,18 @@ def test_split_message_short_text_single_part():
 async def test_rate_limited_edit_is_skipped_not_fatal():
     from mimir_bot.telegram import RateLimited
     class TG:
-        def __init__(self): self.edits = []
+        def __init__(self): self.edits = []; self.sent = []
         async def edit_message(self, c, m, t):
             raise RateLimited("too many requests", retry_after=5)
-        async def send_message(self, c, t, reply_to=None): return 1
+        async def send_message(self, c, t, reply_to=None):
+            self.sent.append(t); return 1
     tg = TG()
     r = TurnRenderer(1, tg, 10, edit_interval=0)
     await r.on_event(StreamEvent("content", "partial"))
     await r.on_event(StreamEvent("content", " more"))
     await r.finish(final_text="partial more")
-    assert r.answer_text == "partial more"
+    # The 429 must not cost the answer: the fallback send carries it.
+    assert tg.sent and tg.sent[0] == "partial more"
 
 async def test_failed_final_edit_still_delivers_the_answer():
     class TG:
@@ -125,3 +127,51 @@ def test_tail_within_handles_astral_characters():
     out = tail_within(text, 4096)
     assert len(out.encode("utf-16-le")) // 2 <= 4096
     assert text.endswith(out)
+
+
+async def test_dead_placeholder_is_not_retried():
+    class TG:
+        def __init__(self): self.calls = 0
+        async def edit_message(self, c, m, t):
+            self.calls += 1
+            raise RuntimeError("Bad Request: message to edit not found")
+        async def send_message(self, c, t, reply_to=None): return 1
+    tg = TG()
+    r = TurnRenderer(1, tg, 10, edit_interval=0)
+    for _ in range(20):
+        await r.on_event(StreamEvent("content", "x"))
+    assert tg.calls == 1, f"retried a dead placeholder {tg.calls} times"
+
+
+async def test_long_answer_streaming_stays_linear():
+    """`answer += chunk` per SSE event was quadratic; 100k chars must stay fast."""
+    import time
+    from mimir_bot.render import TurnRenderer
+
+    class TG:
+        def __init__(self): self.last = None
+        async def edit_message(self, c, m, t): self.last = t; return True
+        async def send_message(self, c, t, reply_to=None): return 1
+
+    r = TurnRenderer(1, TG(), 10, edit_interval=0)
+    started = time.perf_counter()
+    for _ in range(20_000):
+        await r.on_event(StreamEvent("content", "xxxxx"))
+    elapsed = time.perf_counter() - started
+    assert len(r.answer_text) == 100_000
+    assert elapsed < 2.0, f"streaming looks quadratic: {elapsed:.2f}s"
+
+
+async def test_display_keeps_the_tail_of_a_long_answer():
+    from mimir_bot.render import TurnRenderer, MESSAGE_LIMIT
+
+    class TG:
+        async def edit_message(self, c, m, t): return True
+        async def send_message(self, c, t, reply_to=None): return 1
+
+    r = TurnRenderer(1, TG(), 10, edit_interval=0)
+    for i in range(3000):
+        await r.on_event(StreamEvent("content", f"part{i} "))
+    shown = r._display()
+    assert len(shown.encode("utf-16-le")) // 2 <= MESSAGE_LIMIT
+    assert r.answer_text.endswith(shown)

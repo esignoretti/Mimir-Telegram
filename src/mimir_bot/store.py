@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 import aiosqlite
 
+from .config import DEFAULT_EFFORT, DEFAULT_MODEL
+
 #: Measured against the live API: 104,889 chars -> 22,952 prompt tokens.
 CHARS_PER_TOKEN = 4.6
 
@@ -47,7 +49,10 @@ def estimate_tokens(text: str) -> float:
 
 class Store:
     def __init__(
-        self, path: str, default_model: str = "vllm/mimir-slim", default_effort: str = "none"
+        self,
+        path: str,
+        default_model: str = DEFAULT_MODEL,
+        default_effort: str = DEFAULT_EFFORT,
     ) -> None:
         self.path = path
         self.default_model = default_model

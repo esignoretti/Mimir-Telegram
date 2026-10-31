@@ -1,4 +1,5 @@
 # tests/test_store.py
+from mimir_bot.config import DEFAULT_EFFORT, DEFAULT_MODEL
 from mimir_bot.store import Store
 
 async def make_store(tmp_path):
@@ -9,9 +10,9 @@ async def make_store(tmp_path):
 async def test_get_chat_creates_defaults(tmp_path):
     s = await make_store(tmp_path)
     chat = await s.get_chat(5)
-    assert chat.model == "vllm/mimir-slim"
-    assert chat.effort == "none"
-    assert (await s.get_chat(5)).model == "vllm/mimir-slim"
+    assert chat.model == DEFAULT_MODEL
+    assert chat.effort == DEFAULT_EFFORT
+    assert (await s.get_chat(5)).model == DEFAULT_MODEL
 
 async def test_set_model_and_effort_persist(tmp_path):
     s = await make_store(tmp_path)

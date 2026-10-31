@@ -63,6 +63,7 @@ class App:
         self.lock = GenerationLock()
         self._tasks: set[asyncio.Task] = set()
         self._offset = 0
+        self._clock = time.monotonic
 
     # -- dispatch ---------------------------------------------------------
 
@@ -144,8 +145,11 @@ class App:
     # -- loop -------------------------------------------------------------
 
     async def run(self) -> None:
-        last_health = 0.0
-        last_prune = 0.0
+        # Start the maintenance clock at "due now": monotonic() is seconds since
+        # boot, so a 0.0 sentinel would silently skip pruning for the first day.
+        now = self._clock()
+        last_health = now
+        last_prune = now - PRUNE_INTERVAL
         log.info("polling for updates")
         while True:
             try:
@@ -164,14 +168,18 @@ class App:
 
             # Maintenance runs whether or not the poll succeeded: a wedged
             # long-poll would otherwise also stop pruning and health checks.
-            last_health, last_prune = await self._maintenance(last_health, last_prune)
+            # Guarded so a future addition here cannot crash the service.
+            try:
+                last_health, last_prune = await self._maintenance(last_health, last_prune)
+            except Exception as exc:
+                log.warning("maintenance failed: %s", exc)
 
     async def _maintenance(self, last_health: float, last_prune: float) -> tuple[float, float]:
-        now = time.monotonic()
+        now = self._clock()
         if self.cfg.healthcheck_url and now - last_health > HEALTHCHECK_INTERVAL:
             last_health = now
             await self._healthcheck()
-        if now - last_prune > PRUNE_INTERVAL:
+        if now - last_prune >= PRUNE_INTERVAL:
             last_prune = now
             try:
                 removed = await self.store.prune(self.cfg.retention_days)

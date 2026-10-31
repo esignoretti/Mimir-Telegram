@@ -73,10 +73,14 @@ def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
 
     parts: list[str] = []
     rest = text
-    while _units(rest) > limit:
+    # Count the remainder once and decrement, rather than re-encoding the whole
+    # rest of the answer on every iteration.
+    remaining = _units(text)
+    while remaining > limit:
         cut = _cut_point(rest, limit)
         parts.append(rest[:cut])
         rest = rest[cut:]
+        remaining -= _units(parts[-1])
     parts.append(rest)
     return parts
 
@@ -120,20 +124,44 @@ class TurnRenderer:
         self.notify_after = notify_after
 
         self.reasoning_chars = 0
-        self.answer_text = ""
         self.usage: str | None = None
+        # Chunks are appended, never concatenated: `text += chunk` per SSE event
+        # is O(n) per chunk and becomes quadratic on a long answer.
+        self._chunks: list[str] = []
         self._last_edit_at = 0.0
         self._last_sent_text: str | None = None
+        self._placeholder_dead = False
         self._started_at = time.monotonic()
         self._finished = False
 
+    @property
+    def answer_text(self) -> str:
+        return "".join(self._chunks)
+
+    def _tail(self) -> str:
+        """The last ~2x limit characters, built without joining the whole answer."""
+        wanted = MESSAGE_LIMIT * 2
+        picked: list[str] = []
+        size = 0
+        for chunk in reversed(self._chunks):
+            picked.append(chunk)
+            size += len(chunk)
+            if size >= wanted:
+                break
+        picked.reverse()
+        return "".join(picked)
+
     def _display(self) -> str:
-        if self.answer_text:
+        if self._chunks:
             # Keep the tail: that is where the answer is still arriving.
-            return tail_within(self.answer_text, MESSAGE_LIMIT)
+            return tail_within(self._tail(), MESSAGE_LIMIT)
         return thinking_label(self.reasoning_chars)
 
     async def _maybe_edit(self, force: bool = False) -> None:
+        if self._placeholder_dead:
+            # The message was deleted or rejected; retrying it every throttle
+            # tick would spend the rest of the turn on doomed API calls.
+            return
         display = self._display()
         if display == self._last_sent_text:
             return
@@ -151,6 +179,7 @@ class TurnRenderer:
             # A transient API error (deleted placeholder, oversized text) must not
             # cost the user the answer that is still streaming in.
             log.warning("edit skipped for chat %s: %s", self.chat_id, exc)
+            self._placeholder_dead = True
             return
         self._last_sent_text = display
 
@@ -158,7 +187,7 @@ class TurnRenderer:
         if event.kind == "reasoning":
             self.reasoning_chars += len(event.text)
         elif event.kind == "content":
-            self.answer_text += event.text
+            self._chunks.append(event.text)
         elif event.kind == "usage":
             self.usage = event.text  # kept for logging only
             return
@@ -225,7 +254,7 @@ class TurnRenderer:
         caller has already decided the turn is over, so this never raises.
         """
         self._finished = True
-        text = f"error: {message}"[:MESSAGE_LIMIT]
+        text = tail_within(f"error: {message}", MESSAGE_LIMIT)
         if await self._edit_best_effort(text):
             return
         await self._send_best_effort(text)

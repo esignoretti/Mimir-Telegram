@@ -174,3 +174,34 @@ async def test_prune_runs_even_when_polling_fails(tmp_path, monkeypatch):
     except asyncio.CancelledError:
         pass
     assert pruned == [90]
+
+
+async def test_maintenance_prunes_on_a_freshly_booted_host(tmp_path):
+    """monotonic() counts from boot; a 0.0 sentinel skipped pruning for a day."""
+    pruned = []
+
+    class TG:
+        async def edit_message(self, c, m, t): return True
+        async def send_message(self, c, t, reply_to=None): return 1
+
+    class M:
+        async def stream(self, *a, **k):
+            return
+            yield
+
+    class CountingStore(Store):
+        async def prune(self, days):
+            pruned.append(days)
+            return 0
+
+    store = CountingStore(str(tmp_path / "t.db"))
+    await store.init()
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    app = App(cfg, store, TG(), M())
+    # A host that booted five seconds ago.
+    app._clock = lambda: 5.0
+    last_health = 5.0
+    last_prune = 5.0 - 86_400  # what run() now initialises
+    await app._maintenance(last_health, last_prune)
+    assert pruned == [90]
