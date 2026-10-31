@@ -108,7 +108,20 @@ class App:
             self.runner.run(chat_id, text, self.tg, placeholder_id, image_data_url),
         )
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._forget)
+
+    def _forget(self, task: asyncio.Task) -> None:
+        """Retrieve the outcome so a crash inside a turn is logged, not swallowed.
+
+        Without this, an exception escaping TurnRunner would surface only as
+        asyncio's "Task exception was never retrieved" at GC time.
+        """
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error("turn crashed: %s", exc, exc_info=exc)
 
     async def _download_photo(self, file_id: str | None) -> str | None:
         if not file_id:

@@ -59,3 +59,33 @@ async def test_second_message_interrupts_first(tmp_path):
     hist = await store.history(100, 100_000)
     assert all(m["content"] != "first" for m in hist)
     assert any(m["content"] == "answer" for m in hist)
+
+
+async def test_turn_crash_is_logged_not_swallowed(tmp_path, caplog):
+    import logging
+
+    class TG:
+        async def edit_message(self, c, m, t): return True
+        async def send_message(self, c, t, reply_to=None): return 1
+
+    class M:
+        async def stream(self, messages, model, effort, max_tokens=None):
+            from mimir_bot.mimir import StreamEvent
+            yield StreamEvent("content", "answer")
+
+    class BoomStore(Store):
+        """Fails while persisting the answer, i.e. after the stream succeeded."""
+        async def add_message(self, chat_id, role, content, model=None):
+            if role == "assistant":
+                raise RuntimeError("disk full")
+            await super().add_message(chat_id, role, content, model)
+
+    store = BoomStore(str(tmp_path / "t.db")); await store.init()
+    cfg = Config.from_env({"TELEGRAM_BOT_TOKEN": "1:a", "MIMIR_API_KEY": "k",
+                           "ALLOWED_TELEGRAM_USER_IDS": "1"})
+    app = App(cfg, store, TG(), M())
+    with caplog.at_level(logging.ERROR, logger="mimir_bot.app"):
+        await app.handle_update(upd(1, "question"))
+        await app.idle()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("turn crashed" in m and "disk full" in m for m in messages)
