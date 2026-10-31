@@ -164,3 +164,7 @@ network, no credentials. The suite pins the failure modes that actually cost ans
 a model that emits no reasoning, reasoning with no content, reasoning leaking into
 history, the empty-delta final chunk, answers over the message limit, a 429 mid-stream,
 and a placeholder deleted while the answer is still arriving.
+
+## License
+
+[MIT](LICENSE) © 2026 Edoardo Signoretti
