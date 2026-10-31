@@ -91,3 +91,27 @@ are other people's services. The unit above binds no ports and writes only to
 ssh root@hygro.signocloud.it 'systemctl is-active esp32-hygro postgresql caddy'
 ssh root@hygro.signocloud.it 'ss -tlnp'
 ```
+
+## Deploying without destroying host-local state
+
+`rsync --delete` is the convenient way to push code, but three paths exist only
+on the host and must be excluded or they are deleted with everything else:
+
+```bash
+rsync -az --delete -e ssh \
+  --exclude .git --exclude .venv --exclude venv \
+  --exclude .superpowers --exclude .pytest_cache --exclude __pycache__ \
+  --exclude .env \
+  ./ root@hygro.signocloud.it:/opt/mimir-telegram/
+```
+
+- `.env` — secrets, never in git.
+- `venv/` — the host venv (the local one is `.venv/`, a different name).
+- `__pycache__/`, `.pytest_cache/` — noise, but `--delete` makes them matter.
+
+If `venv/` is lost, rebuild it; do not run `pip install -e .` on the host:
+
+```bash
+cd /opt/mimir-telegram && python3 -m venv venv
+venv/bin/pip install httpx==0.28.1 aiosqlite==0.22.1
+```
